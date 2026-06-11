@@ -31,7 +31,7 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
     std::cout << "Mulai Heavy Local Training (OpenMP: " << omp_get_max_threads() << " threads)..." << std::endl;
     double start_time = omp_get_wtime();
 
-    int batch_size = 256;
+    int batch_size = 256; 
 
     for (int epoch = 0; epoch < epochs; epoch++) {
         for (int b = 0; b < num_samples; b += batch_size) {
@@ -53,9 +53,9 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
 
                     float error = prediction - local_y[i];
 
-                    // Error clipping lebih ketat
-                    if (error > 1.0f) error = 1.0f;
-                    if (error < -1.0f) error = -1.0f;
+                    // 1. Error Clipping (Mencegah prediksi liar)
+                    if (error > 5.0f) error = 5.0f;
+                    if (error < -5.0f) error = -5.0f;
 
                     for (int j = 0; j < MODEL_SIZE; j++) {
                         local_gradients[j] += error * local_X[base_idx + j];
@@ -70,27 +70,22 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
                 }
             }
 
+            // Update bobot + 2. Gradient Clipping
             for (int j = 0; j < MODEL_SIZE; j++) {
                 float grad = batch_gradients[j] / current_batch_size;
-
-                // Gradient clipping lebih ketat + L2 regularization
-                grad += 0.0001f * packet.weights[j];
-                if (grad > 0.1f) grad = 0.1f;
-                if (grad < -0.1f) grad = -0.1f;
+                
+                // Batasi gradien maksimal demi kestabilan matematika
+                if (grad > 1.0f) grad = 1.0f;
+                if (grad < -1.0f) grad = -1.0f;
 
                 packet.weights[j] -= lr * grad;
             }
         }
 
-        bool has_nan = false;
-        for (int j = 0; j < MODEL_SIZE; j++) {
-            if (std::isnan(packet.weights[j]) || std::isinf(packet.weights[j])) {
-                has_nan = true;
-                packet.weights[j] = 0.0f;
-            }
-        }
-        if (has_nan) {
-            std::cerr << "Warning: NaN/Inf terdeteksi di Epoch " << epoch + 1 << ", weight di-reset ke 0." << std::endl;
+        // Cek deteksi NaN
+        if (std::isnan(packet.weights[0])) {
+            std::cerr << "Kritis: Bobot mendeteksi NaN di Epoch " << epoch + 1 << "!" << std::endl;
+            exit(EXIT_FAILURE);
         }
 
         if ((epoch + 1) % 10 == 0) {
@@ -110,7 +105,6 @@ int main() {
     int sock = 0;
     struct sockaddr_in serv_addr;
     ModelPacket packet;
-    memset(&packet, 0, sizeof(ModelPacket));
 
     if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         std::cerr << "Socket creation error" << std::endl;
@@ -145,6 +139,7 @@ int main() {
     send(sock, &packet, sizeof(ModelPacket), 0);
     std::cout << "Update bobot berhasil dikirim ke Master." << std::endl;
 
+    shutdown(sock, SHUT_WR);
     close(sock);
     return 0;
 }

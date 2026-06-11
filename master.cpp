@@ -23,9 +23,8 @@ int main() {
     // Inisialisasi Model Global Awal
     ModelPacket global_model;
     global_model.magic_token = MAGIC_NUMBER;
-    srand(42);
     for(int i = 0; i < MODEL_SIZE; i++) {
-        global_model.weights[i] = ((float)rand() / RAND_MAX - 0.5f) * 0.01f;
+        global_model.weights[i] = 0.01f;
     }
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
@@ -37,6 +36,9 @@ int main() {
         perror("setsockopt");
         exit(EXIT_FAILURE);
     }
+
+    int rcvbuf_size = 4 * 1024 * 1024;
+    setsockopt(server_fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf_size, sizeof(rcvbuf_size));
     
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY; // Menerima koneksi dari mana saja di LAN
@@ -67,7 +69,9 @@ int main() {
         send(new_socket, &global_model, sizeof(ModelPacket), 0);
     }
 
-    // Menggantikan loop recv yang lama untuk menyaring ghost connections
+    std::vector<int> bytes_received(expected_workers, 0);
+
+    #pragma omp parallel for num_threads(expected_workers)
     for(int i = 0; i < expected_workers; i++) {
         int total_bytes_received = 0;
         int packet_size = sizeof(ModelPacket);
@@ -85,21 +89,22 @@ int main() {
                 perror("recv failed");
                 break;
             } else if (bytes_read == 0) {
-                // Koneksi ditutup oleh worker sebelum data selesai dikirim
                 break;
             }
             
             total_bytes_received += bytes_read;
         }
-        
-        // Validasi apakah yang konek benar-benar worker kita dan data utuh
-        if (total_bytes_received < packet_size) {
+
+        bytes_received[i] = total_bytes_received;
+    }
+
+    for(int i = 0; i < expected_workers; i++) {
+        if (bytes_received[i] < (int)sizeof(ModelPacket)) {
             std::cerr << "Error: Paket data dari Worker " << i + 1 << " korup atau tidak lengkap!" << std::endl;
             worker_updates[i].data_size = 0;
         } else if (worker_updates[i].magic_token != MAGIC_NUMBER) {
             std::cerr << "Peringatan: Koneksi asing terdeteksi di Worker " << i + 1 
                       << "! Data diabaikan." << std::endl;
-            // Kita set data_size jadi 0 supaya tidak merusak perhitungan FedAvg di bawah
             worker_updates[i].data_size = 0; 
         } else {
             std::cout << "Menerima update VALID dari Worker " << i + 1 
