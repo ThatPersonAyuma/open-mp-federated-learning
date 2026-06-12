@@ -127,7 +127,17 @@ int main() {
     }
 
     // Terima & Validasi
-    recv(sock, &packet, sizeof(ModelPacket), 0);
+    int total_received = 0;
+    char* recv_ptr = (char*)&packet;
+    while (total_received < sizeof(ModelPacket)) {
+        int bytes = recv(sock, recv_ptr + total_received, sizeof(ModelPacket) - total_received, 0);
+        if (bytes <= 0) {
+            std::cerr << "Gagal menerima data dari Master" << std::endl;
+            break;
+        }
+        total_received += bytes;
+    }
+
     if (packet.magic_token == MAGIC_NUMBER) {
         std::cout << "Model Global (Valid) diterima dari Master." << std::endl;
     }
@@ -136,7 +146,16 @@ int main() {
     train_local_model(packet, 50, 0.001f);
 
     // Kirim Balik
-    send(sock, &packet, sizeof(ModelPacket), 0);
+    int total_sent = 0;
+    char* send_ptr = (char*)&packet;
+    while (total_sent < sizeof(ModelPacket)) {
+        int bytes = send(sock, send_ptr + total_sent, sizeof(ModelPacket) - total_sent, 0);
+        if (bytes <= 0) {
+            std::cerr << "Gagal mengirim data ke Master" << std::endl;
+            break;
+        }
+        total_sent += bytes;
+    }
     std::cout << "Update bobot berhasil dikirim ke Master." << std::endl;
 
     shutdown(sock, SHUT_WR);

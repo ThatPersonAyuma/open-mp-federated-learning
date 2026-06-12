@@ -66,7 +66,16 @@ int main() {
         client_sockets.push_back(new_socket);
 
         // Langsung broadcast model global awal ke worker ini
-        send(new_socket, &global_model, sizeof(ModelPacket), 0);
+        int total_sent = 0;
+        char* send_ptr = (char*)&global_model;
+        while (total_sent < sizeof(ModelPacket)) {
+            int bytes = send(new_socket, send_ptr + total_sent, sizeof(ModelPacket) - total_sent, 0);
+            if (bytes <= 0) {
+                std::cerr << "Gagal mengirim model ke Worker " << i + 1 << std::endl;
+                break;
+            }
+            total_sent += bytes;
+        }
     }
 
     std::vector<int> bytes_received(expected_workers, 0);
