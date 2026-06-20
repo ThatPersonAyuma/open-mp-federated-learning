@@ -6,6 +6,8 @@
 #include <omp.h>
 #include <cstring>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include "shared.h"
 
 int num_samples = 20000;
@@ -14,17 +16,57 @@ std::vector<float> local_X;
 std::vector<float> local_y;
 
 void initialize_dummy_data() {
-    std::cout << "Mengalokasikan " << (num_samples * MODEL_SIZE * 4.0) / (1024*1024) << " MB RAM untuk dataset..." << std::endl;
+    std::cout << "Mengalokasikan " << (num_samples * MODEL_SIZE * 4.0) / (1024*1024) << " MB RAM untuk dataset Rekomendasi Pelanggan..." << std::endl;
     local_X.resize(num_samples * MODEL_SIZE);
     local_y.resize(num_samples);
 
+    // Seed untuk randomisasi
+    srand(12345);
+
     for(int i = 0; i < num_samples; i++) {
-        local_y[i] = 1.0f;
+        float target_score = 0.0f;
+
         for(int j = 0; j < MODEL_SIZE; j++) {
-            local_X[i * MODEL_SIZE + j] = (float)((i + j) % 100) * 0.001f;
+            float feature_val = 0.0f;
+            
+            // Simulasi fitur pelanggan
+            if (j == 0) {
+                // Fitur 0: Umur (dinormalisasi 0-1, misal 18-60 tahun)
+                feature_val = (rand() % 43 + 18) / 60.0f;
+            } else if (j == 1) {
+                // Fitur 1: Waktu browsing di aplikasi (menit, dinormalisasi max 120 menit)
+                feature_val = (rand() % 121) / 120.0f;
+            } else if (j == 2) {
+                // Fitur 2: Jumlah transaksi sebelumnya (dinormalisasi max 50 transaksi)
+                feature_val = (rand() % 51) / 50.0f;
+            } else if (j == 3) {
+                // Fitur 3: Rating rata-rata yang diberikan pelanggan (0-5, dinormalisasi 0-1)
+                feature_val = (rand() % 51) / 50.0f;
+            } else {
+                // Fitur lainnya: Data historis interaksi produk, klik, preferensi kategori, dll.
+                // Menggunakan pola pseudo-random yang lebih ringan komputasinya
+                feature_val = (float)((i + j) % 100) * 0.01f;
+            }
+            
+            local_X[i * MODEL_SIZE + j] = feature_val;
+
+            // Buat target score (probabilitas rekomendasi/pembelian) bergantung pada fitur utama
+            if (j < 4) {
+                target_score += feature_val * 0.25f; // Bobot rata untuk 4 fitur utama
+            }
         }
+        
+        // Tambahkan sedikit noise pada target untuk realisme
+        float noise = ((rand() % 21) - 10) * 0.01f; // -0.1 hingga 0.1
+        target_score += noise;
+        
+        // Batasi target antara 0.0 dan 1.0
+        if (target_score > 1.0f) target_score = 1.0f;
+        if (target_score < 0.0f) target_score = 0.0f;
+
+        local_y[i] = target_score;
     }
-    std::cout << "Inisialisasi dataset selesai.\n" << std::endl;
+    std::cout << "Inisialisasi dataset Rekomendasi Pelanggan selesai.\n" << std::endl;
 }
 
 void train_local_model(ModelPacket &packet, int epochs, float lr) {

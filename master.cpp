@@ -6,6 +6,7 @@
 #include <omp.h>
 #include <cstring>
 #include <cmath>
+#include <fstream>
 #include "shared.h"
 
 int main() {
@@ -163,6 +164,16 @@ int main() {
         std::cout << "W[" << j << "] = " << global_model.weights[j] << " | ";
     }
     std::cout << "\nWaktu komputasi Agregasi Paralel: " << (end_time - start_time) * 1000 << " ms" << std::endl;
+
+    // Simpan model global untuk inference
+    std::ofstream out("global_model.bin", std::ios::binary);
+    if (out.is_open()) {
+        out.write(reinterpret_cast<char*>(global_model.weights), MODEL_SIZE * sizeof(float));
+        out.close();
+        std::cout << "Model global berhasil disimpan ke global_model.bin untuk inference." << std::endl;
+    } else {
+        std::cerr << "Gagal menyimpan model ke global_model.bin" << std::endl;
+    }
 
     close(server_fd);
     return 0;

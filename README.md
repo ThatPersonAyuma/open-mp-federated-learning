@@ -13,12 +13,31 @@ Program ini terdiri dari tiga file:
     *   Mendistribusikan model global ke setiap Worker.
     *   Menerima pembaruan bobot dari setiap Worker.
     *   Melakukan agregasi paralel (FedAvg) menggunakan OpenMP untuk menggabungkan model-model lokal menjadi model global baru.
+    *   Menyimpan model global hasil agregasi ke dalam file `global_model.bin` untuk keperluan *inference*.
 3.  **`worker.cpp`**: File yang dijalankan di *Worker Node*. Worker bertugas untuk:
     *   Menghasilkan dataset *dummy* lokal untuk pelatihan.
     *   Terhubung ke Master Node.
     *   Menerima model global dari Master.
     *   Melakukan *Heavy Local Training* (pelatihan lokal) menggunakan OpenMP untuk memparalelkan komputasi *gradient descent* pada *batch* data.
     *   Mengirimkan kembali model lokal yang telah dilatih ke Master.
+4.  **`inference.cpp`**: File utilitas untuk melakukan prediksi. Bertugas untuk:
+    *   Memuat bobot model global dari file `global_model.bin`.
+    *   Menyimulasikan data pelanggan baru.
+    *   Melakukan *inference* (prediksi) probabilitas rekomendasi/pembelian berdasarkan model yang telah dilatih.
+
+## Dataset Simulasi (Rekomendasi Pelanggan)
+
+Dataset yang digunakan untuk *Local Training* pada setiap *Worker* dihasilkan secara dinamis (dummy data) dan dirancang untuk menyimulasikan skenario Rekomendasi Pelanggan. 
+
+Setiap sampel data terdiri dari 5000 fitur (`MODEL_SIZE`), dengan rincian sebagai berikut:
+*   **Fitur 0 (Umur)**: Disimulasikan antara 18-60 tahun (dinormalisasi menjadi 0.0 - 1.0).
+*   **Fitur 1 (Waktu Browsing)**: Disimulasikan maksimal 120 menit (dinormalisasi menjadi 0.0 - 1.0).
+*   **Fitur 2 (Jumlah Transaksi)**: Disimulasikan maksimal 50 transaksi (dinormalisasi menjadi 0.0 - 1.0).
+*   **Fitur 3 (Rating Rata-rata)**: Disimulasikan antara 0-5 (dinormalisasi menjadi 0.0 - 1.0).
+*   **Fitur 4 - 4999 (Data Historis)**: Disimulasikan menggunakan pola pseudo-random untuk mewakili interaksi produk, klik, preferensi kategori, dll.
+
+**Target Prediksi (`local_y`)**:
+Target dari model ini adalah memprediksi **Probabilitas Rekomendasi/Pembelian** (bernilai antara `0.0` hingga `1.0`). Nilai target ini dihitung berdasarkan kombinasi bobot dari 4 fitur utama di atas, ditambah dengan sedikit *noise* acak agar distribusi data lebih realistis.
 
 ## Prerequisite
 
@@ -81,6 +100,7 @@ Buka terminal di komputer atau *Virtual Machine* lain dalam LAN yang sama dan ja
 3.  **Proses Agregasi**: Menampilkan pesan saat memulai *Parallel Aggregation* (FedAvg) via OpenMP.
 4.  **Hasil Akhir**: Menampilkan sebagian dari bobot Model Global Baru setelah agregasi selesai.
 5.  **Waktu Komputasi**: Menampilkan total waktu yang dibutuhkan untuk melakukan agregasi paralel (dalam milidetik).
+6.  **Penyimpanan Model**: Menampilkan status keberhasilan penyimpanan model ke `global_model.bin`.
 
 ### Output pada Worker Node
 
@@ -98,3 +118,19 @@ Buka terminal di komputer atau *Virtual Machine* lain dalam LAN yang sama dan ja
 *   **TCP Sockets**: Menggunakan *socket* TCP standar untuk komunikasi jaringan yang andal antara Master dan Worker.
 *   **Gradient & Error Clipping**: Diimplementasikan pada Worker untuk mencegah *exploding gradients* dan menjaga kestabilan numerik selama pelatihan.
 *   **Magic Token Validation**: Menggunakan `MAGIC_NUMBER` untuk memastikan bahwa Master hanya memproses paket data yang valid dari Worker yang sah.
+
+## Inference (Prediksi)
+
+Setelah *Master* selesai melakukan *Parallel Aggregation* (FedAvg), model global yang baru akan secara otomatis disimpan ke dalam file biner bernama `global_model.bin`. Model ini dapat langsung digunakan untuk melakukan *inference* (prediksi) pada data pelanggan baru tanpa harus melakukan *training* ulang.
+
+Untuk menjalankan *inference*, compile dan jalankan file `inference.cpp`:
+
+```bash
+# Compile program inference
+g++ inference.cpp -o inference
+
+# Jalankan program inference
+./inference
+```
+
+Program ini akan memuat bobot model dari `global_model.bin`, menyimulasikan profil pelanggan baru, dan mengeluarkan persentase probabilitas rekomendasi/pembelian.
