@@ -4,3 +4,4 @@ inference
 *.exe
 data.txt
 data_work*
+*.bin

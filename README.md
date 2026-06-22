@@ -91,6 +91,10 @@ Buka terminal di komputer atau *Virtual Machine* lain dalam LAN yang sama dan ja
 ./worker
 ```
 
+## Docker Alternative
+Untuk kemudahan uji coba, anda dapat menggunakan docker. Lihat instruksi pada link dibawah.
+[Docker Instructions](./instructions/README.md)
+
 ## Penjelasan Output Program
 
 ### Output pada Master Node
