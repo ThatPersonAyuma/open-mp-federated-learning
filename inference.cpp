@@ -19,7 +19,7 @@ int main() {
     float weights[MODEL_SIZE];
     
     // Memuat model yang telah disimpan oleh master
-    load_model("global_model.bin", weights, MODEL_SIZE);
+    load_model("model/global_model.bin", weights, MODEL_SIZE);
 
     // Simulasi data pelanggan baru untuk inference
     std::vector<float> new_customer(MODEL_SIZE, 0.0f);

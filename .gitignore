@@ -2,3 +2,4 @@ master
 worker
 inference
 *.exe
+data.txt
