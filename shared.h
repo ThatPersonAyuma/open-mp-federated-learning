@@ -2,7 +2,18 @@
 #define SHARED_H
 
 #define MODEL_SIZE 5000
-#define PORT 28080
+// #define PORT 28080
+unsigned long getPort()
+{
+
+    char* env = getenv("PORT");
+
+    if(env)
+        return atoi(env);
+
+
+    return 9000;
+}
 #define MAGIC_NUMBER 0xABCDEF   // Token validasi worker
 
 typedef struct {

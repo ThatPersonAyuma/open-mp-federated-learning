@@ -1,6 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <omp.h>
@@ -142,8 +143,17 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
 }
 
 int main() {
-    initialize_dummy_data();
+    char* host = getenv("MASTER_HOST");
+    char* portEnv = getenv("MASTER_PORT");
 
+    std::cin;
+    std::cout
+        << "Connecting to "
+        << host
+        << ":"
+        << portEnv
+        << std::endl;
+    initialize_dummy_data();
     int sock = 0;
     struct sockaddr_in serv_addr;
     ModelPacket packet;
@@ -154,14 +164,67 @@ int main() {
     }
 
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(PORT);
+    int port = std::stoi(portEnv);
+    serv_addr.sin_port =  htons(port);
 
-    // Ganti dengan IP Master Node LAN
-    if (inet_pton(AF_INET, "192.168.34.253", &serv_addr.sin_addr) <= 0) {
-        std::cerr << "Invalid address/ Address not supported" << std::endl;
+    const char* masterHost = getenv("MASTER_HOST");
+
+
+    if(masterHost == nullptr)
+    {
+        std::cerr << "MASTER_HOST not set\n";
         return -1;
     }
 
+
+    std::string portStr = std::to_string(port);
+
+    addrinfo hints{};
+    addrinfo* result = nullptr;
+
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    int status = getaddrinfo(
+        masterHost,
+        portStr.c_str(),
+        &hints,
+        &result
+    );
+
+
+    if(status != 0 || result == nullptr)
+    {
+        std::cerr 
+            << "Host not found: "
+            << masterHost
+            << std::endl;
+
+        return -1;
+    }
+
+
+    // Ambil alamat IP hasil resolve
+    sockaddr_in* addr =
+        reinterpret_cast<sockaddr_in*>(result->ai_addr);
+
+
+    memcpy(
+        &serv_addr.sin_addr,
+        &addr->sin_addr,
+        sizeof(addr->sin_addr)
+    );
+
+    // if (inet_pton(AF_INET, masterHost, &serv_addr.sin_addr) <= 0) {
+
+    //     std::cerr 
+    //         << "Invalid address: "
+    //         << masterHost
+    //         << std::endl;
+
+    //     return -1;
+    // }
+    
     std::cout << "Menghubungkan ke Master..." << std::endl;
     if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
         std::cerr << "Connection Failed" << std::endl;
@@ -188,7 +251,7 @@ int main() {
     train_local_model(packet, 50, 0.001f);
 
     // Kirim Balik
-    int total_sent = 0;
+    unsigned long total_sent = 0;
     char* send_ptr = (char*)&packet;
     while (total_sent < sizeof(ModelPacket)) {
         int bytes = send(sock, send_ptr + total_sent, sizeof(ModelPacket) - total_sent, 0);

@@ -1,0 +1,35 @@
+services:
+
+  master:
+    build: .
+    container_name: master
+    command: ./build/masterNode
+    environment:
+      MASTER_HOST: ${MASTER_HOST}
+      MASTER_PORT: ${MASTER_PORT}
+      EXPECTED_WORKER: ${EXPECTED_WORKER}
+    ports:
+      - "9000:9000"
+    restart: unless-stopped
+
+
+  worker1:
+    build: .
+    container_name: worker1
+    command: ./build/workerNode
+    environment:
+      MASTER_HOST: ${MASTER_HOST}
+      MASTER_PORT: ${MASTER_PORT}
+      WORKER_ID: 1
+    # restart: on-failure
+
+
+  worker2:
+    build: .
+    container_name: worker2
+    command: ./build/workerNode
+    environment:
+      MASTER_HOST: ${MASTER_HOST}
+      MASTER_PORT: ${MASTER_PORT}
+      WORKER_ID: 2
+    # restart: on-failure
