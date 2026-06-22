@@ -3,3 +3,4 @@ worker
 inference
 *.exe
 data.txt
+data_work*

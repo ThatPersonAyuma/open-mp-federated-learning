@@ -99,7 +99,9 @@ int connect_to_master(const char* host, const std::string& portStr) {
     return sock;
 }
 
-// Fungsi Heavy Local Training via OpenMP (Sama seperti logika dasar Anda)
+// ====================================================================
+// PERBAIKAN 1: OPTIMASI HEAVY LOCAL TRAINING (PENGHILANGAN CRITICAL BLOCK)
+// ====================================================================
 void train_local_model(ModelPacket &packet, int epochs, float lr) {
     std::cout << "[TRAIN] Memulai Local Training (OpenMP: " << omp_get_max_threads() << " threads)..." << std::endl;
     double start_time = omp_get_wtime();
@@ -108,41 +110,51 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
     for (int epoch = 0; epoch < epochs; epoch++) {
         for (int b = 0; b < num_samples; b += batch_size) {
             int current_batch_size = std::min(batch_size, num_samples - b);
-            std::vector<float> batch_gradients(MODEL_SIZE, 0.0f);
+            
+            // Step 1: Hitung semua prediksi dan error untuk batch ini terlebih dahulu (Lebih Efisien)
+            std::vector<float> errors(current_batch_size, 0.0f);
+            
+            #pragma omp parallel for schedule(static)
+            for (int i = 0; i < current_batch_size; i++) {
+                int sample_idx = b + i;
+                int base_idx = sample_idx * MODEL_SIZE;
+                float prediction = 0.0f;
 
-            #pragma omp parallel
-            {
-                std::vector<float> local_gradients(MODEL_SIZE, 0.0f);
-                #pragma omp for schedule(static)
-                for (int i = b; i < b + current_batch_size; i++) {
-                    float prediction = 0.0f;
-                    int base_idx = i * MODEL_SIZE;
-
-                    for (int j = 0; j < MODEL_SIZE; j++) {
-                        prediction += local_X[base_idx + j] * packet.weights[j];
-                    }
-
-                    float error = prediction - local_y[i];
-                    if (error > 5.0f) error = 5.0f;
-                    if (error < -5.0f) error = -5.0f;
-
-                    for (int j = 0; j < MODEL_SIZE; j++) {
-                        local_gradients[j] += error * local_X[base_idx + j];
-                    }
+                for (int k = 0; k < MODEL_SIZE; k++) {
+                    prediction += local_X[base_idx + k] * packet.weights[k];
                 }
 
-                #pragma omp critical
-                {
-                    for (int j = 0; j < MODEL_SIZE; j++) {
-                        batch_gradients[j] += local_gradients[j];
-                    }
-                }
+                float err = prediction - local_y[sample_idx];
+                
+                // Error clipping tetap dipertahankan untuk stabilitas
+                if (err > 5.0f) err = 5.0f;
+                if (err < -5.0f) err = -5.0f;
+                
+                errors[i] = err;
             }
 
+            // Step 2: Hitung akumulasi gradien tiap fitur secara paralel
+            std::vector<float> batch_gradients(MODEL_SIZE, 0.0f);
+
+            #pragma omp parallel for schedule(static)
+            for (int j = 0; j < MODEL_SIZE; j++) {
+                float total_feature_grad = 0.0f;
+                for (int i = 0; i < current_batch_size; i++) {
+                    int sample_idx = b + i;
+                    total_feature_grad += errors[i] * local_X[sample_idx * MODEL_SIZE + j];
+                }
+                batch_gradients[j] = total_feature_grad;
+            }
+
+            // Step 3: Update bobot dengan Gradient Clipping yang adaptif
             for (int j = 0; j < MODEL_SIZE; j++) {
                 float grad = batch_gradients[j] / current_batch_size;
-                if (grad > 1.0f) grad = 1.0f;
-                if (grad < -1.0f) grad = -1.0f;
+                
+                // PERUBAHAN: Melonggarkan clipping demi mengakomodasi 4 fitur utama (70% kontribusi)
+                float clip_bound = (j < 4) ? 10.0f : 2.0f; 
+                
+                if (grad > clip_bound) grad = clip_bound;
+                if (grad < -clip_bound) grad = -clip_bound;
 
                 packet.weights[j] -= lr * grad;
             }
@@ -152,6 +164,111 @@ void train_local_model(ModelPacket &packet, int epochs, float lr) {
     packet.data_size = num_samples;
     std::cout << "[TRAIN] Selesai dalam " << (end_time - start_time) << " detik." << std::endl;
 }
+// void train_local_model(ModelPacket &packet, int epochs, float lr) {
+//     std::cout << "[TRAIN] Memulai Local Training (OpenMP: " << omp_get_max_threads() << " threads)..." << std::endl;
+//     double start_time = omp_get_wtime();
+//     int batch_size = 256; 
+
+//     for (int epoch = 0; epoch < epochs; epoch++) {
+//         for (int b = 0; b < num_samples; b += batch_size) {
+//             int current_batch_size = std::min(batch_size, num_samples - b);
+            
+//             // Menggunakan alokasi flat zero untuk menampung gradien batch
+//             std::vector<float> batch_gradients(MODEL_SIZE, 0.0f);
+
+//             // Paralelisasi di tingkat kalkulasi fitur tanpa blocking critical
+//             #pragma omp parallel for schedule(static)
+//             for (int j = 0; j < MODEL_SIZE; j++) {
+//                 float total_feature_grad = 0.0f;
+
+//                 for (int i = b; i < b + current_batch_size; i++) {
+//                     float prediction = 0.0f;
+//                     int base_idx = i * MODEL_SIZE;
+
+//                     // Unrolling internal / SIMD teroptimasi otomatis oleh compiler
+//                     for (int k = 0; k < MODEL_SIZE; k++) {
+//                         prediction += local_X[base_idx + k] * packet.weights[k];
+//                     }
+
+//                     float error = prediction - local_y[i];
+//                     if (error > 5.0f) error = 5.0f;
+//                     if (error < -5.0f) error = -5.0f;
+
+//                     total_feature_grad += error * local_X[base_idx + j];
+//                 }
+                
+//                 // Langsung simpan ke indeks j tanpa rebutan antar thread
+//                 batch_gradients[j] = total_feature_grad;
+//             }
+
+//             // Update bobot + Gradient Clipping
+//             for (int j = 0; j < MODEL_SIZE; j++) {
+//                 float grad = batch_gradients[j] / current_batch_size;
+//                 if (grad > 1.0f) grad = 1.0f;
+//                 if (grad < -1.0f) grad = -1.0f;
+
+//                 packet.weights[j] -= lr * grad;
+//             }
+//         }
+//     }
+//     double end_time = omp_get_wtime();
+//     packet.data_size = num_samples;
+//     std::cout << "[TRAIN] Selesai dalam " << (end_time - start_time) << " detik." << std::endl;
+// }
+
+// Fungsi Heavy Local Training via OpenMP (Sama seperti logika dasar Anda)
+// void train_local_model(ModelPacket &packet, int epochs, float lr) {
+//     std::cout << "[TRAIN] Memulai Local Training (OpenMP: " << omp_get_max_threads() << " threads)..." << std::endl;
+//     double start_time = omp_get_wtime();
+//     int batch_size = 256; 
+
+//     for (int epoch = 0; epoch < epochs; epoch++) {
+//         for (int b = 0; b < num_samples; b += batch_size) {
+//             int current_batch_size = std::min(batch_size, num_samples - b);
+//             std::vector<float> batch_gradients(MODEL_SIZE, 0.0f);
+
+//             #pragma omp parallel
+//             {
+//                 std::vector<float> local_gradients(MODEL_SIZE, 0.0f);
+//                 #pragma omp for schedule(static)
+//                 for (int i = b; i < b + current_batch_size; i++) {
+//                     float prediction = 0.0f;
+//                     int base_idx = i * MODEL_SIZE;
+
+//                     for (int j = 0; j < MODEL_SIZE; j++) {
+//                         prediction += local_X[base_idx + j] * packet.weights[j];
+//                     }
+
+//                     float error = prediction - local_y[i];
+//                     if (error > 5.0f) error = 5.0f;
+//                     if (error < -5.0f) error = -5.0f;
+
+//                     for (int j = 0; j < MODEL_SIZE; j++) {
+//                         local_gradients[j] += error * local_X[base_idx + j];
+//                     }
+//                 }
+
+//                 #pragma omp critical
+//                 {
+//                     for (int j = 0; j < MODEL_SIZE; j++) {
+//                         batch_gradients[j] += local_gradients[j];
+//                     }
+//                 }
+//             }
+
+//             for (int j = 0; j < MODEL_SIZE; j++) {
+//                 float grad = batch_gradients[j] / current_batch_size;
+//                 if (grad > 1.0f) grad = 1.0f;
+//                 if (grad < -1.0f) grad = -1.0f;
+
+//                 packet.weights[j] -= lr * grad;
+//             }
+//         }
+//     }
+//     double end_time = omp_get_wtime();
+//     packet.data_size = num_samples;
+//     std::cout << "[TRAIN] Selesai dalam " << (end_time - start_time) << " detik." << std::endl;
+// }
 
 int main() {
     char* host = getenv("MASTER_HOST");
@@ -234,7 +351,7 @@ int main() {
         }
 
         // 4. JALANKAN TRAINING BERDASARKAN MODEL TERBARU MASTER
-        train_local_model(incoming_model, 5, 0.001f);
+        train_local_model(incoming_model, 10, 0.001f);
 
         // 5. KIRIM HASIL UPDATE BOBOT KEMBALI KE MASTER (ENDPOINT: SEND_WORKER_UPDATE)
         int write_sock = connect_to_master(host, port_str);

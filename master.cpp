@@ -18,7 +18,9 @@ void signal_handler(int signum) {
     keep_running = 0;
 }
 
-// --- FUNGSI TESTING & EVALUASI REGRESI ---
+// ====================================================================
+// PERBAIKAN 2: PARALELISASI INFERENCE DI EVALUASI MODEL
+// ====================================================================
 bool evaluate_model(const std::string& filepath, const float* weights) {
     std::ifstream in(filepath, std::ios::binary);
     if (!in.is_open()) {
@@ -33,30 +35,30 @@ bool evaluate_model(const std::string& filepath, const float* weights) {
         return false;
     }
 
+    // Mengalokasikan seluruh buffer memori testing di awal (Lebih aman untuk OpenMP)
+    std::vector<float> all_features(num_samples * MODEL_SIZE);
     std::vector<float> true_labels(num_samples);
     std::vector<float> pred_labels(num_samples);
 
-    // 1. Load Data dan Lakukan Inference/Prediksi
-    for (int s = 0; s < num_samples; s++) {
-        std::vector<float> features(MODEL_SIZE);
-        in.read(reinterpret_cast<char*>(features.data()), MODEL_SIZE * sizeof(float));
-        in.read(reinterpret_cast<char*>(&true_labels[s]), sizeof(float));
-
-        // Prediksi linear (Dot Product)
-        float prediction = 0.0f;
-        for (int i = 0; i < MODEL_SIZE; i++) {
-            prediction += features[i] * weights[i];
-        }
-
-        // Batasi hasil prediksi sesuai rentang probabilitas 0 s.d 1
-        if (prediction > 1.0f) prediction = 1.0f;
-        if (prediction < 0.0f) prediction = 0.0f;
-
-        pred_labels[s] = prediction;
-    }
+    in.read(reinterpret_cast<char*>(all_features.data()), num_samples * MODEL_SIZE * sizeof(float));
+    in.read(reinterpret_cast<char*>(true_labels.data()), num_samples * sizeof(float));
     in.close();
 
-    // 2. Hitung Rata-rata Label Aktual (untuk R-squared)
+    // Jalankan kalkulasi dot-product prediksi secara paralel penuh via OpenMP
+    #pragma omp parallel for schedule(static)
+    for (int s = 0; s < num_samples; s++) {
+        float prediction = 0.0f;
+        int base_idx = s * MODEL_SIZE;
+
+        for (int i = 0; i < MODEL_SIZE; i++) {
+            prediction += all_features[base_idx + i] * weights[i];
+        }
+
+        // Biarkan nilai murni apa adanya tanpa kliping paksa agar R2 score akurat
+        pred_labels[s] = prediction;
+    }
+
+    // Hitung Rata-rata Label Aktual (untuk R-squared)
     double sum_true = 0.0;
     #pragma omp parallel for reduction(+:sum_true)
     for (int i = 0; i < num_samples; i++) {
@@ -64,9 +66,9 @@ bool evaluate_model(const std::string& filepath, const float* weights) {
     }
     double mean_true = sum_true / num_samples;
 
-    // 3. Hitung Metrik Evaluasi Regresi Komparatif via OpenMP
-    double ss_residual = 0.0; // Sum of Squared Residuals
-    double ss_total = 0.0;    // Total Sum of Squares
+    // Hitung Metrik Evaluasi Regresi Komparatif via OpenMP
+    double ss_residual = 0.0; 
+    double ss_total = 0.0;    
     double absolute_error_sum = 0.0;
 
     #pragma omp parallel for reduction(+:ss_residual, ss_total, absolute_error_sum)
@@ -82,15 +84,11 @@ bool evaluate_model(const std::string& filepath, const float* weights) {
     double mse = ss_residual / num_samples;
     double rmse = std::sqrt(mse);
     double mae = absolute_error_sum / num_samples;
-    double r_squared = 1.0 - (ss_residual / (ss_total + 1e-10)); // Tambah epsilon kecil anti-div-by-zero
+    double r_squared = 1.0 - (ss_residual / (ss_total + 1e-10)); 
 
-    // 4. Print Laporan Hasil Evaluasi
     std::cout << "\n=========================================================" << std::endl;
-    std::cout << "        LAPORAN EVALUASI MODEL (REGRESI)                 " << std::endl;
+    std::cout << "        LAPORAN EVALUASI MODEL (REGRESI UNBIASED)        " << std::endl;
     std::cout << "=========================================================" << std::endl;
-    std::cout << " File Path       : " << filepath << std::endl;
-    std::cout << " Jumlah Sampel   : " << num_samples << " pelanggan" << std::endl;
-    std::cout << "---------------------------------------------------------" << std::endl;
     std::cout << " Mean Absolute Error (MAE)      : " << mae << std::endl;
     std::cout << " Mean Squared Error (MSE)       : " << mse << std::endl;
     std::cout << " Root Mean Squared Error (RMSE) : " << rmse << std::endl;
@@ -99,6 +97,88 @@ bool evaluate_model(const std::string& filepath, const float* weights) {
 
     return true;
 }
+
+// --- FUNGSI TESTING & EVALUASI REGRESI ---
+// bool evaluate_model(const std::string& filepath, const float* weights) {
+//     std::ifstream in(filepath, std::ios::binary);
+//     if (!in.is_open()) {
+//         std::cerr << "[EVALUASI ERROR] Gagal membuka file testing: " << filepath << std::endl;
+//         return false;
+//     }
+
+//     int num_samples = 0;
+//     in.read(reinterpret_cast<char*>(&num_samples), sizeof(int));
+//     if (num_samples <= 0) {
+//         std::cerr << "[EVALUASI ERROR] Sampel testing kosong atau tidak valid." << std::endl;
+//         return false;
+//     }
+
+//     std::vector<float> true_labels(num_samples);
+//     std::vector<float> pred_labels(num_samples);
+
+//     // 1. Load Data dan Lakukan Inference/Prediksi
+//     for (int s = 0; s < num_samples; s++) {
+//         std::vector<float> features(MODEL_SIZE);
+//         in.read(reinterpret_cast<char*>(features.data()), MODEL_SIZE * sizeof(float));
+//         in.read(reinterpret_cast<char*>(&true_labels[s]), sizeof(float));
+
+//         // Prediksi linear (Dot Product)
+//         float prediction = 0.0f;
+//         for (int i = 0; i < MODEL_SIZE; i++) {
+//             prediction += features[i] * weights[i];
+//         }
+
+//         // Batasi hasil prediksi sesuai rentang probabilitas 0 s.d 1
+//         if (prediction > 1.0f) prediction = 1.0f;
+//         if (prediction < 0.0f) prediction = 0.0f;
+
+//         pred_labels[s] = prediction;
+//     }
+//     in.close();
+
+//     // 2. Hitung Rata-rata Label Aktual (untuk R-squared)
+//     double sum_true = 0.0;
+//     #pragma omp parallel for reduction(+:sum_true)
+//     for (int i = 0; i < num_samples; i++) {
+//         sum_true += true_labels[i];
+//     }
+//     double mean_true = sum_true / num_samples;
+
+//     // 3. Hitung Metrik Evaluasi Regresi Komparatif via OpenMP
+//     double ss_residual = 0.0; // Sum of Squared Residuals
+//     double ss_total = 0.0;    // Total Sum of Squares
+//     double absolute_error_sum = 0.0;
+
+//     #pragma omp parallel for reduction(+:ss_residual, ss_total, absolute_error_sum)
+//     for (int i = 0; i < num_samples; i++) {
+//         double diff = true_labels[i] - pred_labels[i];
+//         ss_residual += diff * diff;
+//         absolute_error_sum += std::abs(diff);
+
+//         double dev = true_labels[i] - mean_true;
+//         ss_total += dev * dev;
+//     }
+
+//     double mse = ss_residual / num_samples;
+//     double rmse = std::sqrt(mse);
+//     double mae = absolute_error_sum / num_samples;
+//     double r_squared = 1.0 - (ss_residual / (ss_total + 1e-10)); // Tambah epsilon kecil anti-div-by-zero
+
+//     // 4. Print Laporan Hasil Evaluasi
+//     std::cout << "\n=========================================================" << std::endl;
+//     std::cout << "        LAPORAN EVALUASI MODEL (REGRESI)                 " << std::endl;
+//     std::cout << "=========================================================" << std::endl;
+//     std::cout << " File Path       : " << filepath << std::endl;
+//     std::cout << " Jumlah Sampel   : " << num_samples << " pelanggan" << std::endl;
+//     std::cout << "---------------------------------------------------------" << std::endl;
+//     std::cout << " Mean Absolute Error (MAE)      : " << mae << std::endl;
+//     std::cout << " Mean Squared Error (MSE)       : " << mse << std::endl;
+//     std::cout << " Root Mean Squared Error (RMSE) : " << rmse << std::endl;
+//     std::cout << " R-squared (R2 Score)           : " << r_squared << " (" << r_squared * 100.0 << "%)" << std::endl;
+//     std::cout << "=========================================================\n" << std::endl;
+
+//     return true;
+// }
 
 bool send_all(int socket, const char* data, size_t size) {
     size_t total_sent = 0;
