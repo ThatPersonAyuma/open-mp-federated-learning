@@ -92,7 +92,7 @@ Buka terminal di komputer atau *Virtual Machine* lain dalam LAN yang sama dan ja
 ```
 
 ## Docker Alternative
-Untuk kemudahan uji coba, anda dapat menggunakan docker. Lihat instruksi pada link dibawah.
+Untuk kemudahan uji coba, anda dapat menggunakan docker. Lihat instruksi pada link dibawah.<br>
 [Docker Instructions](./instructions/README.md)
 
 ## Penjelasan Output Program
